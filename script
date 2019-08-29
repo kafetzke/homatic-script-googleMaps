@@ -1,0 +1,165 @@
+! ------  Google Maps Traffic API 23.06.2019  Vers. 1.1 -----------------------------------------------------------
+! by kafetzke
+!
+! ------------------ EINRICHTUNG Anfang -------------------
+!
+! Anzulegen fuer das Script sind die 
+! folgenden Systemvariablen
+! --------------------------------------------------------------
+! maps_start                   String
+! maps_destination             String
+! maps_duration                Zahl
+! maps_duration_in_traffic     Zahl
+! maps_duration_diff           Zahl
+! maps_distance                Zahl
+! maps_timestamp               String
+! ------------------------------------------------------------------------------------------------------------
+!
+! -- Einbindung in ein CCU-Programm --
+! WENN 
+!   Zeitplan (z.B: alle 5min)
+!  DANN
+!   Script (dieses Framework)
+!   
+!
+! -- Ansprechen des Frameworks --
+! WENN
+!   Zeitpunkt (z.B. 06:00-12:00)
+! DANN
+!   maps_start = Startadresse
+!   maps_destination = Zieladresse
+!
+!
+! -- Nutzung (Beispiel)
+! WENN
+!   maps_duration_diff > 0 (bei Änderung)
+! DANN
+!   tuWas
+!
+! ------------------------------------------------------------------------------------------------------------
+! Debugging einschalten = true oder aussschalten = false
+! z.B. zum Test unter "Script testen"
+!
+! ------------------------------------------------------------------------------------------------------------
+boolean debug = true;
+
+! --------------------------------------------------------------
+! Virtuelles CUxD-Exec-Device hier angeben
+! --------------------------------------------------------------
+string execdevice = "CUxD.CUX2801001:1";
+
+! --------------------------------------------------------------
+! Die API verlangt nach einem Key. Hierzu ist eine Registrierung notwendig - dann gibt es kostenloses Kontinget
+! https://cloud.google.com/maps-platform/?apis=routes
+
+string apikey = "YourGoogleApiKey";
+
+! Start und Endpunkt können wie ein Suchbegriff auf GoogleMaps angegeben werden. Wichtig: Leerzeichen sind durch "+" zu ersetzen
+
+string startpoint = dom.GetObject("maps_start").Value();
+string endpoint = dom.GetObject("maps_destination").Value();
+
+!------------------ EINRICHTUNG ENDE -------------------
+
+!------------------------------------------------------------------------------------------------------------
+! Aufruf der Google-API
+! https://maps.googleapis.com/maps/api/distancematrix/json?units=metric&origins=Washington,DC&destinations=New+York+City,NY&departure_time=now&key=YOUR_API_KEY
+!------------------------------------------------------------------------------------------------------------
+
+string url = "https://maps.googleapis.com/maps/api/distancematrix/json?origins=" # startpoint # "\&destinations=" # endpoint # "\&mode=driving\&language=de-DE\&departure_time=now\&key=" # apikey;
+
+if(debug){WriteLine("url: " #url);}
+
+string downloader = "LD_LIBRARY_PATH=/usr/local/addons/cuxd /usr/local/addons/cuxd/curl";
+string stdout = "";
+string cmd = downloader # " " # url;
+var ret;
+
+!------------------------------------------------------------------------------------------------------------
+! Los gehts...
+!------------------------------------------------------------------------------------------------------------
+
+var duration = 0;
+var duration_in_traffic = 0;
+var duration_diff = 0;
+
+WriteLine("cmd : "#cmd);
+
+ret= dom.GetObject(execdevice # ".CMD_SETS").State(cmd);
+if(debug){WriteLine("ret cmd_sets : "#ret);}
+ret = dom.GetObject(execdevice # ".CMD_QUERY_RET").State(1);
+if(debug){WriteLine("ret cmd_query_ret: "#ret);}
+stdout = dom.GetObject(execdevice # ".CMD_RETS").State();
+
+!-----------  Entfernung --------------
+string keyword = "distance";
+if (stdout)
+{
+  string temp_string = stdout.Substr(stdout.Find(keyword));
+  temp_string = temp_string.Substr(temp_string.Find("value")+8);
+  
+  ! Diese schreibweise sorgt für einen double-Wert
+  var value = 0.0 + temp_string.Substr(0,temp_string.Find("}"));
+  
+  dom.GetObject("maps_distance").State(value/1000);
+  if(debug) {WriteLine("distance : "#value);}
+}
+
+!-----------  Dauer --------------
+string keyword = "duration";
+if (stdout)
+{
+  string temp_string = stdout.Substr(stdout.Find(keyword));
+  temp_string = temp_string.Substr(temp_string.Find("value")+8);
+  
+  ! Diese schreibweise sorgt für einen Integer-Wert
+  var value = 0 + temp_string.Substr(0,temp_string.Find("}"));
+  
+    dom.GetObject("maps_duration").State(value/60);
+  if(debug) {WriteLine("duration : "#value);}
+  duration = value;
+}
+
+!-----------  Dauer mit Verkehr --------------
+string keyword = "duration_in_traffic";
+if (stdout)
+{
+  string temp_string = stdout.Substr(stdout.Find(keyword));
+  
+  if (temp_string <> "")
+  {
+    temp_string = temp_string.Substr(temp_string.Find("value")+8);
+
+    ! Diese schreibweise sorgt für einen Integer-Wert
+    var value = 0 + temp_string.Substr(0,temp_string.Find("}"));
+    dom.GetObject("maps_duration_in_traffic").State(value/60);
+    
+    if(debug) {WriteLine("duration_in_traffic: "#value);}
+    duration_in_traffic = value;
+    }
+  else
+  {
+    duration_in_traffic = duration;
+  }
+}
+
+!---------- Ergebnis schreiben und Eingabe-Variablen zurücksetzen---
+if (duration_in_traffic > duration)
+{
+  duration_diff = duration_in_traffic - duration;
+  if(debug) 
+  {
+    WriteLine("Verzögerung gefunden! "#duration_diff#"min");
+  }
+}
+else
+{
+  duration_diff = 0;
+}
+if(debug) 
+{
+  WriteLine("duration_diff : "#duration_diff);
+}
+
+dom.GetObject("maps_duration_diff").State(duration_diff/60);
+dom.GetObject("maps_timestamp").State(system.Date("%Y-%m-%d %H:%M:%S").ToTime());
